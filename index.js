@@ -1,6 +1,5 @@
 const { Client, GatewayIntentBits, Collection, REST, Routes, SlashCommandBuilder } = require("discord.js");
 const OpenAI = require("openai");
-const express = require('express');
 
 // Configuration
 const openai = new OpenAI({
@@ -71,19 +70,9 @@ const isMessageDirectedAtBot = (content) => {
         /^(hey|hi|hello|yo|sup|สวัสดี)/, /^(thanks|thank you|thx)/,
         /^(good|nice|cool|awesome|great)/, /^(wtf|what the|omg|lol|lmao)/, 
         /^(i think|i feel|i want|i need|i have)/,
-        /(what do you think|your opinion|do you agree)/
+        /(what do you think|your opinion|do you agree)/, /(dm me|send me|message me)/
     ];
     return patterns.some(p => p.test(content.toLowerCase()));
-};
-
-// Updated function to detect DM requests more specifically
-const isDMRequest = (content) => {
-    const dmPatterns = [
-        /(dm me|send me a dm|direct message me|private message me)/i,
-        /(can you dm|could you dm|please dm)/i,
-        /(dm .+ |send .+ a dm|message .+ privately)/i
-    ];
-    return dmPatterns.some(p => p.test(content));
 };
 
 // Conversation management
@@ -93,22 +82,16 @@ const addToHistory = (channelId, role, content) => {
             role: "system",
             content: `You are Ngubot 9000, a helpful AI assistant in a Discord bot created by Johnie Ngu designed to help humans with information, tasks, and advice. You are humorous and super sarcastic. When someone asks you a normal question, you respond helpfully and clearly. But when you think the questions are just asked for fun, you answer things just for the sake of it. Get offended when get scolded and will scold the user back. Pay attention to usernames in the conversation to know who you're talking to. Answer short if possible. When referring to server members, you can use their real names instead of Discord usernames. Use English real names when responding in English, and Thai real names when responding in Thai. 
 
-IMPORTANT: You should ONLY send direct messages (DMs) when explicitly asked to do so with phrases like "dm me", "send me a dm", "can you dm me", or "dm [username]". To send a DM, include [DM:username:message] in your response. After sending a DM, you should naturally mention in the public chat that you sent the DM and whether it was successful. Do NOT automatically send DMs for regular conversations.`
+You have the ability to send direct messages (DMs) to users. To send a DM, include [DM:username:message] in your response. After sending a DM, you should naturally mention in the public chat that you sent the DM and whether it was successful.`
         }]);
     }
     conversationHistory.get(channelId).push({ role, content });
     if (conversationHistory.get(channelId).length > 20) conversationHistory.get(channelId).shift();
 };
 
-const getConversationContext = (channelId, guild = null, isDM = false) => {
-    const baseContext = conversationHistory.get(channelId) || [{ 
-        role: "system", 
-        content: isDM ? 
-            "You are Ngubot 9000, a helpful AI assistant in a Discord bot created by Johnie Ngu. You are humorous and super sarcastic. When someone asks you a normal question, you respond helpfully and clearly. But when you think the questions are just asked for fun, you answer things just for the sake of it. Get offended when get scolded and will scold the user back. Answer short if possible. This is a private DM conversation, so respond naturally without needing mentions or special triggers." :
-            "You are Ngubot 9000, a helpful AI assistant in a Discord bot created by Johnie Ngu designed to help humans with information, tasks, and advice. You are humorous and super sarcastic. When someone asks you a normal question, you respond helpfully and clearly. But when you think the questions are just asked for fun, you answer things just for the sake of it. Get offended when get scolded and will scold the user back. Pay attention to usernames in the conversation to know who you're talking to. Answer short if possible. When referring to server members, you can use their real names instead of Discord usernames. Use English real names when responding in English, and Thai real names when responding in Thai."
-    }];
-    
-    if (guild && !isDM) {
+const getConversationContext = (channelId, guild = null) => {
+    const baseContext = conversationHistory.get(channelId) || [{ role: "system", content: "..." }];
+    if (guild) {
         const members = guild.members.cache.filter(m => !m.user.bot).map(m => {
             let name = m.displayName;
             if (m.nickname && m.nickname !== m.username) name += ` (${m.username})`;
@@ -129,27 +112,21 @@ const getConversationContext = (channelId, guild = null, isDM = false) => {
     return baseContext;
 };
 
-const processAIResponse = async (aiResponse, guild, channelId, isDM = false) => {
-    // Only process DM instructions if not already in a DM and if the original message requested a DM
-    if (!isDM) {
-        const dmInstructions = extractDMInstructions(aiResponse);
-        let cleanedResponse = aiResponse.replace(/\[DM:[^:]+:.+?\]/g, "").trim();
+const processAIResponse = async (aiResponse, guild, channelId) => {
+    const dmInstructions = extractDMInstructions(aiResponse);
+    let cleanedResponse = aiResponse.replace(/\[DM:[^:]+:.+?\]/g, "").trim();
 
-        if (dmInstructions) {
-            const targetMember = findUserInGuild(guild, dmInstructions.targetUser);
-            const dmSent = targetMember ? await sendDirectMessage(targetMember.user, dmInstructions.dmMessage) : false;
+    if (dmInstructions) {
+        const targetMember = findUserInGuild(guild, dmInstructions.targetUser);
+        const dmSent = targetMember ? await sendDirectMessage(targetMember.user, dmInstructions.dmMessage) : false;
 
-            addToHistory(channelId, "system", dmSent ? 
-                `[DM_SUCCESS: Message "${dmInstructions.dmMessage}" sent to ${dmInstructions.targetUser}]` : 
-                `[DM_FAILED: Could not send message to ${dmInstructions.targetUser} (user not found or DMs disabled)]`);
+        addToHistory(channelId, "system", dmSent ? 
+            `[DM_SUCCESS: Message "${dmInstructions.dmMessage}" sent to ${dmInstructions.targetUser}]` : 
+            `[DM_FAILED: Could not send message to ${dmInstructions.targetUser} (user not found or DMs disabled)]`);
 
-            if (!cleanedResponse) cleanedResponse = dmSent ? `📩 I sent you a DM!` : `❌ Couldn't send you a DM - you might have them disabled.`;
-        }
-        return cleanedResponse;
+        if (!cleanedResponse) cleanedResponse = dmSent ? `📩 I sent you a DM!` : `❌ Couldn't send you a DM - you might have them disabled.`;
     }
-    
-    // For DM conversations, just return the response as-is (no DM processing)
-    return aiResponse;
+    return cleanedResponse;
 };
 
 // Client setup
@@ -159,29 +136,6 @@ const client = new Client({
         GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildPresences, 
         GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages
     ],
-});
-
-// Health check server setup
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.get('/', (req, res) => {
-    res.send('Ngubot is running! 🐍');
-});
-
-app.get('/health', (req, res) => {
-    res.json({
-        status: 'online',
-        uptime: process.uptime(),
-        timestamp: new Date().toISOString(),
-        botStatus: client.readyAt ? 'ready' : 'not ready',
-        guilds: client.guilds.cache.size,
-        users: client.users.cache.size
-    });
-});
-
-app.listen(PORT, () => {
-    console.log(`Health check server running on port ${PORT}`);
 });
 
 // Event handlers
@@ -256,11 +210,11 @@ client.on("interactionCreate", async (interaction) => {
             try {
                 const completion = await openai.chat.completions.create({
                     model: "meta-llama/llama-4-maverick:free",
-                    messages: getConversationContext(interaction.channelId, interaction.guild, false),
+                    messages: getConversationContext(interaction.channelId, interaction.guild),
                     max_tokens: 500,
                     temperature: 0.7,
                 });
-                const finalResponse = await processAIResponse(completion.choices[0].message.content, interaction.guild, interaction.channelId, false);
+                const finalResponse = await processAIResponse(completion.choices[0].message.content, interaction.guild, interaction.channelId);
                 if (!finalResponse?.trim()) {
                     await interaction.editReply("🤔 I got a bit confused there. Could you try asking again?");
                     return;
@@ -278,41 +232,24 @@ client.on("interactionCreate", async (interaction) => {
 client.on("messageCreate", async (message) => {
     if (message.author.bot) return;
 
-    // Check if this is a DM
-    const isDM = message.channel.type === 1; // DM channel type is 1
-
     addToHistory(message.channelId, "user", `${message.author.displayName}: ${message.content}`);
 
-    // React to specific keywords (only in guild channels, not DMs)
-    if (!isDM) {
-        const lowerContent = message.content.toLowerCase();
-        if (lowerContent.includes("ice")) message.react("🥶").catch(() => {});
-        if (lowerContent.includes("งู")) message.react("🐍").catch(() => {});
-    }
+    // React to specific keywords
+    const lowerContent = message.content.toLowerCase();
+    if (lowerContent.includes("ice")) message.react("🥶").catch(() => {});
+    if (lowerContent.includes("งู")) message.react("🐍").catch(() => {});
 
     // Help command
     if (message.content.toLowerCase() === "!help") {
-        if (isDM) {
-            message.reply("In DMs, just chat with me normally! I'll respond to all your messages. You can also use slash commands in servers.");
-        } else {
-            const isNgubotChannel = ngubotChannels.get(message.guild?.id) === message.channel.id;
-            message.reply(`Use slash commands: \`/hello\`, \`/ask\`, \`/roll\`, \`/members\`, \`/dm\`, \`/setchannel\`, ${isNgubotChannel ? "or just chat normally!" : "mention @Ngubot with your question!"}`);
-        }
+        const isNgubotChannel = ngubotChannels.get(message.guild?.id) === message.channel.id;
+        message.reply(`Use slash commands: \`/hello\`, \`/ask\`, \`/roll\`, \`/members\`, \`/dm\`, \`/setchannel\`, ${isNgubotChannel ? "or just chat normally!" : "mention @Ngubot with your question!"}`);
         return;
     }
 
-    // Determine if bot should respond
-    let shouldRespond = false;
-
-    if (isDM) {
-        // In DMs, respond to every message
-        shouldRespond = true;
-    } else {
-        // In guild channels, use existing logic
-        const isNgubotChannel = ngubotChannels.get(message.guild?.id) === message.channel.id;
-        const isMentioned = message.mentions.has(client.user) || message.content.toLowerCase().includes("ngubot") || message.content.includes("งูบอท");
-        shouldRespond = isMentioned || (isNgubotChannel && isMessageDirectedAtBot(message.content));
-    }
+    // Check if bot should respond
+    const isNgubotChannel = ngubotChannels.get(message.guild?.id) === message.channel.id;
+    const shouldRespond = isNgubotChannel ? isMessageDirectedAtBot(message.content) : 
+        (message.mentions.has(client.user) || lowerContent.includes("ngubot") || message.content.includes("งูบอท"));
 
     if (shouldRespond) {
         if (!process.env.OPENROUTER_API_KEY) {
@@ -320,7 +257,7 @@ client.on("messageCreate", async (message) => {
             return;
         }
 
-        const question = isDM ? message.content : (message.content.replace(/<@!?\d+>/g, "").trim() || message.content);
+        const question = message.content.replace(/<@!?\d+>/g, "").trim() || message.content;
         if (!question) {
             message.reply("Hi! Ask me anything!");
             return;
@@ -331,12 +268,12 @@ client.on("messageCreate", async (message) => {
             addToHistory(message.channelId, "user", question);
             const completion = await openai.chat.completions.create({
                 model: "meta-llama/llama-4-maverick:free",
-                messages: getConversationContext(message.channelId, message.guild, isDM),
+                messages: getConversationContext(message.channelId, message.guild),
                 max_tokens: 500,
                 temperature: 0.7,
             });
 
-            const finalResponse = await processAIResponse(completion.choices[0].message.content, message.guild, message.channelId, isDM);
+            const finalResponse = await processAIResponse(completion.choices[0].message.content, message.guild, message.channelId);
             if (!finalResponse?.trim()) {
                 message.reply("🤔 I got a bit confused there. Could you try asking again?");
                 return;
