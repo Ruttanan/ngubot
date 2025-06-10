@@ -1,24 +1,24 @@
 const { Client, GatewayIntentBits, Collection, REST, Routes, SlashCommandBuilder } = require("discord.js");
 const OpenAI = require("openai");
 
+const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-    res.send('Ngubot is running! 🐍🤖');
+    res.send('Ngubot is running! 🐍');
 });
 
 app.get('/health', (req, res) => {
     res.json({ 
         status: 'online',
         uptime: process.uptime(),
-        timestamp: new Date().toISOString(),
-        botStatus: client.user ? 'Connected' : 'Disconnected'
+        timestamp: new Date().toISOString()
     });
 });
 
 app.listen(PORT, () => {
-    console.log(`✅ Web server running on port ${PORT}`);
+    console.log(`Health check server running on port ${PORT}`);
 });
 
 // Configuration
