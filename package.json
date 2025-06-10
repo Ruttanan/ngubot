@@ -1,29 +1,17 @@
 {
   "name": "ngubot-discord-bot",
   "version": "1.0.0",
-  "description": "A Discord bot with AI capabilities",
+  "description": "Ngubot Discord Bot",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "start": "node index.js"
+
   },
   "dependencies": {
     "discord.js": "^14.14.1",
     "openai": "^4.20.1",
     "express": "^4.18.2"
   },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
-  },
   "engines": {
-    "node": ">=16.9.0"
-  },
-  "keywords": [
-    "discord",
-    "bot",
-    "ai",
-    "openai"
-  ],
-  "author": "Your Name",
-  "license": "MIT"
-}
+    "node": ">=18.0.0"
+  }
