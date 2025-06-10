@@ -272,8 +272,10 @@ client.on("messageCreate", async (message) => {
 
     // Check if bot should respond
     const isNgubotChannel = ngubotChannels.get(message.guild?.id) === message.channel.id;
-    const shouldRespond = isNgubotChannel ? isMessageDirectedAtBot(message.content) : 
-        (message.mentions.has(client.user) || lowerContent.includes("ngubot") || message.content.includes("งูบอท"));
+    const isMentioned = message.mentions.has(client.user) || lowerContent.includes("ngubot") || message.content.includes("งูบอท");
+    
+    // Fixed logic: In dedicated channels, respond to mentions OR directed messages. In normal channels, only mentions.
+    const shouldRespond = isMentioned || (isNgubotChannel && isMessageDirectedAtBot(message.content));
 
     if (shouldRespond) {
         if (!process.env.OPENROUTER_API_KEY) {
