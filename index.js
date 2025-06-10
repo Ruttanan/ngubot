@@ -1,7 +1,8 @@
 const { Client, GatewayIntentBits, Collection, REST, Routes, SlashCommandBuilder } = require("discord.js");
 const OpenAI = require("openai");
-
 const express = require('express');
+
+// Express setup for Render.com
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -95,6 +96,39 @@ const isMessageDirectedAtBot = (content) => {
     return patterns.some(p => p.test(content.toLowerCase()));
 };
 
+// Safe interaction reply function
+const safeReply = async (interaction, content, options = {}) => {
+    try {
+        if (interaction.replied || interaction.deferred) {
+            return await interaction.editReply(content);
+        } else {
+            return await interaction.reply({ content, ...options });
+        }
+    } catch (error) {
+        if (error.code === 10062) {
+            console.log('Interaction expired, cannot respond');
+            return null;
+        }
+        console.error('Error responding to interaction:', error);
+        throw error;
+    }
+};
+
+const safeDeferReply = async (interaction, options = {}) => {
+    try {
+        if (!interaction.replied && !interaction.deferred) {
+            return await interaction.deferReply(options);
+        }
+    } catch (error) {
+        if (error.code === 10062) {
+            console.log('Interaction expired, cannot defer');
+            return null;
+        }
+        console.error('Error deferring interaction:', error);
+        throw error;
+    }
+};
+
 // Conversation management
 const addToHistory = (channelId, role, content) => {
     if (!conversationHistory.has(channelId)) {
@@ -175,77 +209,94 @@ client.on("interactionCreate", async (interaction) => {
 
     const { commandName } = interaction;
 
-    switch (commandName) {
-        case "hello":
-            await interaction.reply(`Hello ${interaction.user.username}! 👋`);
-            break;
+    try {
+        switch (commandName) {
+            case "hello":
+                await safeReply(interaction, `Hello ${interaction.user.username}! 👋`);
+                break;
 
-        case "dm":
-            const targetUser = interaction.options.getUser("user");
-            const messageToSend = interaction.options.getString("message");
-            if (targetUser.id === interaction.user.id || targetUser.id === client.user.id) {
-                await interaction.reply("You can't DM yourself through me! 😄");
-                return;
-            }
-            await interaction.deferReply({ ephemeral: true });
-            const success = await sendDirectMessage(targetUser, `📩 **Message from ${interaction.user.displayName}:**\n${messageToSend}\n\n*Sent via Ngubot*`);
-            await interaction.editReply(success ? `✅ Successfully sent your message to ${targetUser.displayName}!` : `❌ Failed to send message to ${targetUser.displayName}.`);
-            break;
-
-        case "members":
-            const members = interaction.guild.members.cache.filter(m => !m.user.bot).map(m => `**${m.displayName}**${m.nickname && m.nickname !== m.username ? ` (${m.username})` : ""}`);
-            const response = `**Server Members (${members.length}):**\n${members.join("\n")}`;
-            await interaction.reply(response.length > 1900 ? response.substring(0, 1900) + "\n\n*List truncated*" : response);
-            break;
-
-        case "roll":
-            const numDice = interaction.options.getInteger("dice") || 1;
-            const numSides = interaction.options.getInteger("sides") || 6;
-            const results = Array.from({ length: numDice }, () => Math.floor(Math.random() * numSides) + 1);
-            const rollResponse = `🎲 Rolling ${numDice}d${numSides}:\n${numDice === 1 ? `**Result:** ${results[0]}` : `**Rolls:** [${results.join(", ")}]\n**Total:** ${results.reduce((a, b) => a + b, 0)}`}`;
-            await interaction.reply(rollResponse);
-            break;
-
-        case "setchannel":
-            const enable = interaction.options.getBoolean("enable");
-            const guildId = interaction.guild.id;
-            const channelId = interaction.channel.id;
-            if (enable) {
-                ngubotChannels.set(guildId, channelId);
-                await interaction.reply(`✅ **Ngubot Channel Set!**\nThis channel is now my dedicated channel.`);
-            } else {
-                ngubotChannels.delete(guildId);
-                await interaction.reply(`❌ **Ngubot Channel Disabled!**`);
-            }
-            break;
-
-        case "ask":
-            const question = interaction.options.getString("question");
-            await interaction.deferReply();
-            if (!process.env.OPENROUTER_API_KEY) {
-                await interaction.editReply("❌ OpenRouter API key not configured!");
-                return;
-            }
-            addToHistory(interaction.channelId, "user", question);
-            try {
-                const completion = await openai.chat.completions.create({
-                    model: "meta-llama/llama-4-maverick:free",
-                    messages: getConversationContext(interaction.channelId, interaction.guild),
-                    max_tokens: 500,
-                    temperature: 0.7,
-                });
-                const finalResponse = await processAIResponse(completion.choices[0].message.content, interaction.guild, interaction.channelId);
-                if (!finalResponse?.trim()) {
-                    await interaction.editReply("🤔 I got a bit confused there. Could you try asking again?");
+            case "dm":
+                const targetUser = interaction.options.getUser("user");
+                const messageToSend = interaction.options.getString("message");
+                if (targetUser.id === interaction.user.id || targetUser.id === client.user.id) {
+                    await safeReply(interaction, "You can't DM yourself through me! 😄");
                     return;
                 }
-                addToHistory(interaction.channelId, "assistant", finalResponse);
-                await interaction.editReply(`**Question:** ${question}\n\n**Ngubot:** ${finalResponse.length > 1900 ? finalResponse.substring(0, 1900) + "..." : finalResponse}`);
-            } catch (error) {
-                console.error("OpenAI API error:", error);
-                await interaction.editReply("❌ Sorry, I encountered an error while processing your request.");
+                await safeDeferReply(interaction, { ephemeral: true });
+                const success = await sendDirectMessage(targetUser, `📩 **Message from ${interaction.user.displayName}:**\n${messageToSend}\n\n*Sent via Ngubot*`);
+                await safeReply(interaction, success ? `✅ Successfully sent your message to ${targetUser.displayName}!` : `❌ Failed to send message to ${targetUser.displayName}.`);
+                break;
+
+            case "members":
+                const members = interaction.guild.members.cache.filter(m => !m.user.bot).map(m => `**${m.displayName}**${m.nickname && m.nickname !== m.username ? ` (${m.username})` : ""}`);
+                const response = `**Server Members (${members.length}):**\n${members.join("\n")}`;
+                await safeReply(interaction, response.length > 1900 ? response.substring(0, 1900) + "\n\n*List truncated*" : response);
+                break;
+
+            case "roll":
+                const numDice = interaction.options.getInteger("dice") || 1;
+                const numSides = interaction.options.getInteger("sides") || 6;
+                const results = Array.from({ length: numDice }, () => Math.floor(Math.random() * numSides) + 1);
+                const rollResponse = `🎲 Rolling ${numDice}d${numSides}:\n${numDice === 1 ? `**Result:** ${results[0]}` : `**Rolls:** [${results.join(", ")}]\n**Total:** ${results.reduce((a, b) => a + b, 0)}`}`;
+                await safeReply(interaction, rollResponse);
+                break;
+
+            case "setchannel":
+                const enable = interaction.options.getBoolean("enable");
+                const guildId = interaction.guild.id;
+                const channelId = interaction.channel.id;
+                if (enable) {
+                    ngubotChannels.set(guildId, channelId);
+                    await safeReply(interaction, `✅ **Ngubot Channel Set!**\nThis channel is now my dedicated channel.`);
+                } else {
+                    ngubotChannels.delete(guildId);
+                    await safeReply(interaction, `❌ **Ngubot Channel Disabled!**`);
+                }
+                break;
+
+            case "ask":
+                const question = interaction.options.getString("question");
+                await safeDeferReply(interaction);
+                
+                if (!process.env.OPENROUTER_API_KEY) {
+                    await safeReply(interaction, "❌ OpenRouter API key not configured!");
+                    return;
+                }
+                
+                addToHistory(interaction.channelId, "user", question);
+                
+                try {
+                    const completion = await openai.chat.completions.create({
+                        model: "meta-llama/llama-4-maverick:free",
+                        messages: getConversationContext(interaction.channelId, interaction.guild),
+                        max_tokens: 500,
+                        temperature: 0.7,
+                    });
+                    
+                    const finalResponse = await processAIResponse(completion.choices[0].message.content, interaction.guild, interaction.channelId);
+                    
+                    if (!finalResponse?.trim()) {
+                        await safeReply(interaction, "🤔 I got a bit confused there. Could you try asking again?");
+                        return;
+                    }
+                    
+                    addToHistory(interaction.channelId, "assistant", finalResponse);
+                    await safeReply(interaction, `**Question:** ${question}\n\n**Ngubot:** ${finalResponse.length > 1900 ? finalResponse.substring(0, 1900) + "..." : finalResponse}`);
+                } catch (error) {
+                    console.error("OpenAI API error:", error);
+                    await safeReply(interaction, "❌ Sorry, I encountered an error while processing your request.");
+                }
+                break;
+        }
+    } catch (error) {
+        console.error(`Error handling ${commandName} command:`, error);
+        if (error.code !== 10062) { // Don't try to respond if interaction is expired
+            try {
+                await safeReply(interaction, "❌ Sorry, something went wrong while processing your command.");
+            } catch (e) {
+                console.error("Failed to send error message:", e);
             }
-            break;
+        }
     }
 });
 
