@@ -84,6 +84,18 @@ const extractDMInstructions = (response) => {
     return match ? { targetUser: match[1].trim(), dmMessage: match[2].trim() } : null;
 };
 
+const shouldInitiateDM = (content) => {
+    const dmPatterns = [
+        /^(dm me|send me|message me)/, 
+        /(can you dm|could you dm|dm me)/,
+        /(send me a dm|send a dm)/,
+        /(private message|pm me)/,
+        /(direct message)/,
+        /dm.*\b(me|him|her|them|john|boss|pun|tun|boon|faye|mini|kevin|ngu|pookpik|geng|aim)\b/i
+    ];
+    return dmPatterns.some(p => p.test(content.toLowerCase()));
+};
+
 const isMessageDirectedAtBot = (content) => {
     const patterns = [
         /^(what|how|when|where|why|who|can you|could you|do you|are you|will you|you)/, 
@@ -91,7 +103,7 @@ const isMessageDirectedAtBot = (content) => {
         /^(hey|hi|hello|yo|sup|สวัสดี)/, /^(thanks|thank you|thx)/,
         /^(good|nice|cool|awesome|great)/, /^(wtf|what the|omg|lol|lmao)/, 
         /^(i think|i feel|i want|i need|i have)/,
-        /(what do you think|your opinion|do you agree)/, /(dm me|send me|message me)/
+        /(what do you think|your opinion|do you agree)/
     ];
     return patterns.some(p => p.test(content.toLowerCase()));
 };
@@ -132,11 +144,16 @@ const safeDeferReply = async (interaction, options = {}) => {
 // Conversation management
 const addToHistory = (channelId, role, content) => {
     if (!conversationHistory.has(channelId)) {
+        // Different system prompts for DMs vs server channels
+        const systemPrompt = channelId.length < 19 ? // DM channels have shorter IDs
+            `You are Ngubot 9000, a helpful AI assistant in a Discord bot created by Johnie Ngu. You are currently in a private DM conversation. You are humorous and super sarcastic. When someone asks you a normal question, you respond helpfully and clearly. But when you think the questions are just asked for fun, you answer things just for the sake of it. Get offended when get scolded and will scold the user back. Answer short if possible. Keep the conversation natural and engaging in this private setting.` :
+            `You are Ngubot 9000, a helpful AI assistant in a Discord bot created by Johnie Ngu designed to help humans with information, tasks, and advice. You are humorous and super sarcastic. When someone asks you a normal question, you respond helpfully and clearly. But when you think the questions are just asked for fun, you answer things just for the sake of it. Get offended when get scolded and will scold the user back. Pay attention to usernames in the conversation to know who you're talking to. Answer short if possible. When referring to server members, you can use their real names instead of Discord usernames. Use English real names when responding in English, and Thai real names when responding in Thai. 
+
+You have the ability to send direct messages (DMs) to users ONLY when specifically asked to do so (like "dm me", "can you dm John", etc.). To send a DM, include [DM:username:message] in your response. After sending a DM, you should naturally mention in the public chat that you sent the DM and whether it was successful.`;
+
         conversationHistory.set(channelId, [{
             role: "system",
-            content: `You are Ngubot 9000, a helpful AI assistant in a Discord bot created by Johnie Ngu designed to help humans with information, tasks, and advice. You are humorous and super sarcastic. When someone asks you a normal question, you respond helpfully and clearly. But when you think the questions are just asked for fun, you answer things just for the sake of it. Get offended when get scolded and will scold the user back. Pay attention to usernames in the conversation to know who you're talking to. Answer short if possible. When referring to server members, you can use their real names instead of Discord usernames. Use English real names when responding in English, and Thai real names when responding in Thai. 
-
-You have the ability to send direct messages (DMs) to users. To send a DM, include [DM:username:message] in your response. After sending a DM, you should naturally mention in the public chat that you sent the DM and whether it was successful.`
+            content: systemPrompt
         }]);
     }
     conversationHistory.get(channelId).push({ role, content });
@@ -166,21 +183,27 @@ const getConversationContext = (channelId, guild = null) => {
     return baseContext;
 };
 
-const processAIResponse = async (aiResponse, guild, channelId) => {
-    const dmInstructions = extractDMInstructions(aiResponse);
-    let cleanedResponse = aiResponse.replace(/\[DM:[^:]+:.+?\]/g, "").trim();
+const processAIResponse = async (aiResponse, guild, channelId, isDM = false) => {
+    // Only process DM instructions if not already in a DM and if guild exists
+    if (!isDM && guild) {
+        const dmInstructions = extractDMInstructions(aiResponse);
+        let cleanedResponse = aiResponse.replace(/\[DM:[^:]+:.+?\]/g, "").trim();
 
-    if (dmInstructions) {
-        const targetMember = findUserInGuild(guild, dmInstructions.targetUser);
-        const dmSent = targetMember ? await sendDirectMessage(targetMember.user, dmInstructions.dmMessage) : false;
+        if (dmInstructions) {
+            const targetMember = findUserInGuild(guild, dmInstructions.targetUser);
+            const dmSent = targetMember ? await sendDirectMessage(targetMember.user, dmInstructions.dmMessage) : false;
 
-        addToHistory(channelId, "system", dmSent ? 
-            `[DM_SUCCESS: Message "${dmInstructions.dmMessage}" sent to ${dmInstructions.targetUser}]` : 
-            `[DM_FAILED: Could not send message to ${dmInstructions.targetUser} (user not found or DMs disabled)]`);
+            addToHistory(channelId, "system", dmSent ? 
+                `[DM_SUCCESS: Message "${dmInstructions.dmMessage}" sent to ${dmInstructions.targetUser}]` : 
+                `[DM_FAILED: Could not send message to ${dmInstructions.targetUser} (user not found or DMs disabled)]`);
 
-        if (!cleanedResponse) cleanedResponse = dmSent ? `📩 I sent you a DM!` : `❌ Couldn't send you a DM - you might have them disabled.`;
+            if (!cleanedResponse) cleanedResponse = dmSent ? `📩 I sent you a DM!` : `❌ Couldn't send you a DM - you might have them disabled.`;
+        }
+        return cleanedResponse;
     }
-    return cleanedResponse;
+    
+    // For DMs, just return the response as-is (no DM processing)
+    return aiResponse;
 };
 
 // Client setup
@@ -273,7 +296,7 @@ client.on("interactionCreate", async (interaction) => {
                         temperature: 0.7,
                     });
                     
-                    const finalResponse = await processAIResponse(completion.choices[0].message.content, interaction.guild, interaction.channelId);
+                    const finalResponse = await processAIResponse(completion.choices[0].message.content, interaction.guild, interaction.channelId, false);
                     
                     if (!finalResponse?.trim()) {
                         await safeReply(interaction, "🤔 I got a bit confused there. Could you try asking again?");
@@ -303,24 +326,48 @@ client.on("interactionCreate", async (interaction) => {
 client.on("messageCreate", async (message) => {
     if (message.author.bot) return;
 
+    const isDM = !message.guild; // Check if message is from DM
+    
     addToHistory(message.channelId, "user", `${message.author.displayName}: ${message.content}`);
 
-    // React to specific keywords
-    const lowerContent = message.content.toLowerCase();
-    if (lowerContent.includes("ice")) message.react("🥶").catch(() => {});
-    if (lowerContent.includes("งู")) message.react("🐍").catch(() => {});
+    // React to specific keywords (only in server channels, not DMs)
+    if (!isDM) {
+        const lowerContent = message.content.toLowerCase();
+        if (lowerContent.includes("ice")) message.react("🥶").catch(() => {});
+        if (lowerContent.includes("งู")) message.react("🐍").catch(() => {});
+    }
 
     // Help command
     if (message.content.toLowerCase() === "!help") {
-        const isNgubotChannel = ngubotChannels.get(message.guild?.id) === message.channel.id;
-        message.reply(`Use slash commands: \`/hello\`, \`/ask\`, \`/roll\`, \`/members\`, \`/dm\`, \`/setchannel\`, ${isNgubotChannel ? "or just chat normally!" : "mention @Ngubot with your question!"}`);
+        if (isDM) {
+            message.reply("Hi! You're in a DM with me, so just chat normally - I'll respond to everything you say! You can also use slash commands like `/hello`, `/ask`, `/roll`.");
+        } else {
+            const isNgubotChannel = ngubotChannels.get(message.guild?.id) === message.channel.id;
+            message.reply(`Use slash commands: \`/hello\`, \`/ask\`, \`/roll\`, \`/members\`, \`/dm\`, \`/setchannel\`, ${isNgubotChannel ? "or just chat normally!" : "mention @Ngubot with your question!"}`);
+        }
         return;
     }
 
-    // Check if bot should respond
-    const isNgubotChannel = ngubotChannels.get(message.guild?.id) === message.channel.id;
-    const shouldRespond = isNgubotChannel ? isMessageDirectedAtBot(message.content) : 
-        (message.mentions.has(client.user) || lowerContent.includes("ngubot") || message.content.includes("งูบอท"));
+    // Determine if bot should respond
+    let shouldRespond = false;
+    
+    if (isDM) {
+        // In DMs, respond to everything
+        shouldRespond = true;
+    } else {
+        // In server channels, use existing logic
+        const isNgubotChannel = ngubotChannels.get(message.guild?.id) === message.channel.id;
+        const lowerContent = message.content.toLowerCase();
+        
+        if (isNgubotChannel) {
+            shouldRespond = isMessageDirectedAtBot(message.content) || shouldInitiateDM(message.content);
+        } else {
+            shouldRespond = message.mentions.has(client.user) || 
+                          lowerContent.includes("ngubot") || 
+                          message.content.includes("งูบอท") ||
+                          shouldInitiateDM(message.content);
+        }
+    }
 
     if (shouldRespond) {
         if (!process.env.OPENROUTER_API_KEY) {
@@ -344,7 +391,7 @@ client.on("messageCreate", async (message) => {
                 temperature: 0.7,
             });
 
-            const finalResponse = await processAIResponse(completion.choices[0].message.content, message.guild, message.channelId);
+            const finalResponse = await processAIResponse(completion.choices[0].message.content, message.guild, message.channelId, isDM);
             if (!finalResponse?.trim()) {
                 message.reply("🤔 I got a bit confused there. Could you try asking again?");
                 return;
