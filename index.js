@@ -370,7 +370,12 @@ client.on("messageCreate", async (message) => {
         console.log(`Server message - isNgubotChannel: ${isNgubotChannel}, mentions bot: ${message.mentions.has(client.user)}`);
         
         if (isNgubotChannel) {
-            shouldRespond = isMessageDirectedAtBot(message.content) || shouldInitiateDM(message.content);
+            // FIXED: Added @mention check to dedicated channel logic
+            shouldRespond = message.mentions.has(client.user) ||
+                          isMessageDirectedAtBot(message.content) || 
+                          shouldInitiateDM(message.content) ||
+                          lowerContent.includes("ngubot") || 
+                          message.content.includes("งูบอท");
             console.log(`In Ngubot channel - shouldRespond: ${shouldRespond}`);
         } else {
             shouldRespond = message.mentions.has(client.user) || 
