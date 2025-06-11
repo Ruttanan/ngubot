@@ -209,9 +209,13 @@ const processAIResponse = async (aiResponse, guild, channelId, isDM = false) => 
 // Client setup
 const client = new Client({
     intents: [
-        GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildPresences, 
-        GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages
+        GatewayIntentBits.Guilds, 
+        GatewayIntentBits.GuildMessages, 
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMessageReactions, 
+        GatewayIntentBits.GuildPresences, 
+        GatewayIntentBits.GuildMembers, 
+        GatewayIntentBits.DirectMessages
     ],
 });
 
@@ -290,7 +294,7 @@ client.on("interactionCreate", async (interaction) => {
                 
                 try {
                     const completion = await openai.chat.completions.create({
-                        model: "meta-llama/llama-4-maverick:free",
+                        model: "meta-llama/llama-3.1-8b-instruct:free",
                         messages: getConversationContext(interaction.channelId, interaction.guild),
                         max_tokens: 500,
                         temperature: 0.7,
@@ -328,6 +332,9 @@ client.on("messageCreate", async (message) => {
 
     const isDM = !message.guild; // Check if message is from DM
     
+    // Add debug logging
+    console.log(`Message received: "${message.content}" from ${message.author.username} in ${isDM ? 'DM' : 'server'}`);
+    
     addToHistory(message.channelId, "user", `${message.author.displayName}: ${message.content}`);
 
     // React to specific keywords (only in server channels, not DMs)
@@ -354,20 +361,27 @@ client.on("messageCreate", async (message) => {
     if (isDM) {
         // In DMs, respond to everything
         shouldRespond = true;
+        console.log("DM detected - will respond");
     } else {
         // In server channels, use existing logic
         const isNgubotChannel = ngubotChannels.get(message.guild?.id) === message.channel.id;
         const lowerContent = message.content.toLowerCase();
         
+        console.log(`Server message - isNgubotChannel: ${isNgubotChannel}, mentions bot: ${message.mentions.has(client.user)}`);
+        
         if (isNgubotChannel) {
             shouldRespond = isMessageDirectedAtBot(message.content) || shouldInitiateDM(message.content);
+            console.log(`In Ngubot channel - shouldRespond: ${shouldRespond}`);
         } else {
             shouldRespond = message.mentions.has(client.user) || 
                           lowerContent.includes("ngubot") || 
                           message.content.includes("งูบอท") ||
                           shouldInitiateDM(message.content);
+            console.log(`Not in Ngubot channel - shouldRespond: ${shouldRespond}`);
         }
     }
+
+    console.log(`Final decision - shouldRespond: ${shouldRespond}`);
 
     if (shouldRespond) {
         if (!process.env.OPENROUTER_API_KEY) {
@@ -383,13 +397,16 @@ client.on("messageCreate", async (message) => {
 
         try {
             message.channel.sendTyping();
-            addToHistory(message.channelId, "user", question);
+            console.log("Sending to OpenRouter API...");
+            
             const completion = await openai.chat.completions.create({
-                model: "meta-llama/llama-4-maverick:free",
+                model: "meta-llama/llama-3.1-8b-instruct:free",
                 messages: getConversationContext(message.channelId, message.guild),
                 max_tokens: 500,
                 temperature: 0.7,
             });
+
+            console.log("OpenRouter API response received");
 
             const finalResponse = await processAIResponse(completion.choices[0].message.content, message.guild, message.channelId, isDM);
             if (!finalResponse?.trim()) {
@@ -399,6 +416,7 @@ client.on("messageCreate", async (message) => {
 
             addToHistory(message.channelId, "assistant", finalResponse);
             message.reply(finalResponse.length > 1900 ? finalResponse.substring(0, 1900) + "..." : finalResponse);
+            console.log("Response sent successfully");
         } catch (error) {
             console.error("OpenAI API error:", error);
             message.reply("❌ Sorry, I encountered an error while processing your request.");
