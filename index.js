@@ -1,6 +1,7 @@
 const { Client, GatewayIntentBits, Collection, REST, Routes, SlashCommandBuilder } = require("discord.js");
 const OpenAI = require("openai");
 const express = require('express');
+const https = require('https'); // Add this for self-ping
 
 // Express setup for Render.com
 const app = express();
@@ -20,7 +21,40 @@ app.get('/health', (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Health check server running on port ${PORT}`);
+    
+    // Start self-ping after server is running
+    startSelfPing();
 });
+
+// Self-ping function to keep the bot awake
+function startSelfPing() {
+    const APP_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+    
+    setInterval(() => {
+        try {
+            const url = new URL('/health', APP_URL);
+            const module = url.protocol === 'https:' ? require('https') : require('http');
+            
+            const req = module.get(url.toString(), (res) => {
+                console.log(`✅ Self-ping successful: ${res.statusCode} at ${new Date().toISOString()}`);
+            });
+            
+            req.on('error', (error) => {
+                console.error(`❌ Self-ping failed: ${error.message}`);
+            });
+            
+            req.setTimeout(30000, () => {
+                req.destroy();
+                console.error('❌ Self-ping timeout');
+            });
+            
+        } catch (error) {
+            console.error(`❌ Self-ping error: ${error.message}`);
+        }
+    }, 10 * 60 * 1000); // 10 minutes in milliseconds
+    
+    console.log('🔄 Self-ping started - will ping every 10 minutes');
+}
 
 // Configuration
 const openai = new OpenAI({
