@@ -35,21 +35,31 @@ function startSelfPing() {
             const url = new URL('/health', APP_URL);
             const module = url.protocol === 'https:' ? require('https') : require('http');
             
+            console.log(`🔄 Starting self-ping to: ${url.toString()}`);
+            
             const req = module.get(url.toString(), (res) => {
-                console.log(`✅ Self-ping successful: ${res.statusCode} at ${new Date().toISOString()}`);
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                    console.log(`✅ Self-ping successful: ${res.statusCode} at ${new Date().toISOString()}`);
+                });
             });
             
             req.on('error', (error) => {
-                console.error(`❌ Self-ping failed: ${error.message}`);
+                console.error(`❌ Self-ping failed: ${error.message} at ${new Date().toISOString()}`);
             });
             
-            req.setTimeout(30000, () => {
+            // Reduced timeout to 15 seconds and added more specific logging
+            req.setTimeout(15000, () => {
+                console.error(`❌ Self-ping timeout (>15s) at ${new Date().toISOString()}`);
                 req.destroy();
-                console.error('❌ Self-ping timeout');
             });
+            
+            // Ensure the request ends properly
+            req.end();
             
         } catch (error) {
-            console.error(`❌ Self-ping error: ${error.message}`);
+            console.error(`❌ Self-ping error: ${error.message} at ${new Date().toISOString()}`);
         }
     }, 10 * 60 * 1000); // 10 minutes in milliseconds
     
