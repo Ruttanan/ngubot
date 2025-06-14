@@ -86,7 +86,7 @@ const dmHistory = new Map();
 
 // Commands
 const commands = [
-    new SlashCommandBuilder().setName("hello").setDescription("Says hello to you!"),
+    new SlashCommandBuilder().setName("log").setDescription("view current version"),
     new SlashCommandBuilder().setName("ask").setDescription("Ask Ngubot a question")
         .addStringOption(option => option.setName("question").setDescription("Your question for Ngubot").setRequired(true)),
     new SlashCommandBuilder().setName("roll").setDescription("Roll dice")
@@ -171,7 +171,7 @@ const shouldInitiateDM = (content) => {
 const isMessageDirectedAtBot = (content) => {
     const patterns = [
         /^(what|how|when|where|why|who|can you|could you|do you|are you|will you|you)/, 
-        /\?$/, /^(tell me|explain|help|answer)/, /(ngubot|งูบอท)/, 
+        /\?$/, /^(tell me|explain|help|answer|dm)/, /(ngubot|งูบอท)/, 
         /^(hey|hi|hello|yo|sup|สวัสดี)/, /^(thanks|thank you|thx)/,
         /^(good|nice|cool|awesome|great)/, /^(wtf|what the|omg|lol|lmao)/, 
         /^(i think|i feel|i want|i need|i have)/,
