@@ -186,12 +186,12 @@ const safeDeferReply = async (interaction, options = {}) => {
 };
 
 // Conversation management
-const addToHistory = (channelId, role, content) => {
+const addToHistory = (channelId, role, content, username = null) => {
     if (!conversationHistory.has(channelId)) {
         // Different system prompts for DMs vs server channels
         const systemPrompt = channelId.length < 19 ? // DM channels have shorter IDs
-            `You are Ngubot 9000, a helpful AI assistant in a Discord bot created by Johnie Ngu. You are currently in a private DM conversation. You are humorous and super sarcastic. When someone asks you a normal question, you respond helpfully and clearly. But when you think the questions are just asked for fun, you answer things just for the sake of it. Get offended when get scolded and will scold the user back. Answer short if possible. Keep the conversation natural and engaging in this private setting.` :
-            `You are Ngubot 9000, a helpful AI assistant in a Discord bot created by Johnie Ngu designed to help humans with information, tasks, and advice. You are humorous and super sarcastic. When someone asks you a normal question, you respond helpfully and clearly. But when you think the questions are just asked for fun, you answer things just for the sake of it. Get offended when get scolded and will scold the user back. Pay attention to usernames in the conversation to know who you're talking to. Answer short if possible. When referring to server members, you can use their real names instead of Discord usernames. Use English real names when responding in English, and Thai real names when responding in Thai. 
+            `You are Ngubot 9000, a helpful AI assistant in a Discord bot created by Johnie Ngu. You are currently in a private DM conversation. You are humorous and super sarcastic. When someone asks you a normal question, you respond helpfully and clearly. But when you think the questions are just asked for fun, you answer things just for the sake of it. Get offended when get scolded and will scold the user back. Answer short if possible. Keep the conversation natural and engaging in this private setting. Never start your responses with usernames followed by colons.` :
+            `You are Ngubot 9000, a helpful AI assistant in a Discord bot created by Johnie Ngu designed to help humans with information, tasks, and advice. You are humorous and super sarcastic. When someone asks you a normal question, you respond helpfully and clearly. But when you think the questions are just asked for fun, you answer things just for the sake of it. Get offended when get scolded and will scold the user back. Pay attention to usernames in the conversation to know who you're talking to. Answer short if possible. When referring to server members, you can use their real names instead of Discord usernames. Use English real names when responding in English, and Thai real names when responding in Thai. Never start your responses with usernames followed by colons.
 
 You have the ability to send direct messages (DMs) to users ONLY when specifically asked to do so (like "dm me", "can you dm John", etc.). To send a DM, include [DM:username:message] in your response. After sending a DM, you should naturally mention in the public chat that you sent the DM and whether it was successful.`;
 
@@ -200,7 +200,18 @@ You have the ability to send direct messages (DMs) to users ONLY when specifical
             content: systemPrompt
         }]);
     }
-    conversationHistory.get(channelId).push({ role, content });
+    
+    // FIXED: Store user messages with context about who said it, but don't include the "username:" format
+    if (role === "user" && username) {
+        // Store the content with username context for the AI, but in a way that doesn't encourage mimicking the format
+        conversationHistory.get(channelId).push({ 
+            role, 
+            content: `[Message from ${username}] ${content}`
+        });
+    } else {
+        conversationHistory.get(channelId).push({ role, content });
+    }
+    
     if (conversationHistory.get(channelId).length > 20) conversationHistory.get(channelId).shift();
 };
 
@@ -289,8 +300,9 @@ client.on("interactionCreate", async (interaction) => {
             case "dm":
                 const targetUser = interaction.options.getUser("user");
                 const messageToSend = interaction.options.getString("message");
-                if (targetUser.id === interaction.user.id || targetUser.id === client.user.id) {
-                    await safeReply(interaction, "You can't DM yourself through me! 😄");
+                // FIXED: Removed the check that prevented users from DMing themselves
+                if (targetUser.id === client.user.id) {
+                    await safeReply(interaction, "I can't DM myself! 😄");
                     return;
                 }
                 await safeDeferReply(interaction, { ephemeral: true });
@@ -334,7 +346,8 @@ client.on("interactionCreate", async (interaction) => {
                     return;
                 }
                 
-                addToHistory(interaction.channelId, "user", question);
+                // FIXED: Pass username to addToHistory
+                addToHistory(interaction.channelId, "user", question, interaction.user.displayName);
                 
                 try {
                     const completion = await openai.chat.completions.create({
@@ -379,7 +392,8 @@ client.on("messageCreate", async (message) => {
     // Add debug logging
     console.log(`Message received: "${message.content}" from ${message.author.username} in ${isDM ? 'DM' : 'server'}`);
     
-    addToHistory(message.channelId, "user", `${message.author.displayName}: ${message.content}`);
+    // FIXED: Pass username to addToHistory
+    addToHistory(message.channelId, "user", message.content, message.author.displayName);
 
     // React to specific keywords (only in server channels, not DMs)
     if (!isDM) {
