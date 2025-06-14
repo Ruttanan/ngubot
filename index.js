@@ -76,7 +76,7 @@ const memberRealNames = {
     HappyBT: ["Boss", "บอส"], "Dr. Feelgood": ["Pun", "ปั้น"], padkapaow: ["Tun", "ตั้น"],
     BoonP1: ["Boon", "บุ๋น"], orengipratuu: ["Faye", "ฟาเย่"], imminicosmic: ["Mini", "มินิ"],
     keffv1: ["Kevin", "เควิน"], keyfungus: ["Ngu", "งู"], soybeant0fu: ["Pookpik", "ปุ๊กปิ๊ก"],
-    ยักcute: ["Geng", "เก่ง"], "ํืUnclejoe": ["Aim", "เอม"],
+    ยักcute: ["Geng", "เก่ง"], "ํืUnclejoe": ["Aim", "เอม"], "abobo.gimbo": ["Gimbo", "กิมโบ้"],
 };
 
 // Global state
@@ -114,30 +114,58 @@ const sendDirectMessage = async (user, message) => {
 
 const findUserInGuild = (guild, username) => {
     const lower = username.toLowerCase();
-    return guild.members.cache.find(m => 
+    
+    // First, try to find by exact username match
+    let member = guild.members.cache.find(m => 
         [m.user.username, m.displayName, m.nickname].some(n => n?.toLowerCase() === lower)
-    ) || guild.members.cache.find(m => 
-        Object.entries(memberRealNames).some(([discord, real]) => 
-            real.some(name => name.toLowerCase() === lower) && m.user.username === discord
-        )
     );
+    
+    // If not found, try real names
+    if (!member) {
+        member = guild.members.cache.find(m => 
+            Object.entries(memberRealNames).some(([discord, real]) => 
+                real.some(name => name.toLowerCase() === lower) && m.user.username === discord
+            )
+        );
+    }
+    
+    // If still not found, try partial matches
+    if (!member) {
+        member = guild.members.cache.find(m => 
+            [m.user.username, m.displayName, m.nickname].some(n => 
+                n?.toLowerCase().includes(lower) || lower.includes(n?.toLowerCase())
+            )
+        );
+    }
+    
+    return member;
 };
 
+// FIXED: Improved DM instruction extraction with better regex
 const extractDMInstructions = (response) => {
-    const match = response.match(/\[DM:([^:]+):(.+?)\]/);
-    return match ? { targetUser: match[1].trim(), dmMessage: match[2].trim() } : null;
+    // Look for [DM:username:message] format
+    const dmMatch = response.match(/\[DM:([^:]+):(.+?)\]/);
+    if (dmMatch) {
+        return { targetUser: dmMatch[1].trim(), dmMessage: dmMatch[2].trim() };
+    }
+    
+    return null;
 };
 
+// FIXED: Enhanced DM detection patterns
 const shouldInitiateDM = (content) => {
+    const lowerContent = content.toLowerCase();
     const dmPatterns = [
-        /^(dm me|send me|message me)/, 
+        /^(dm me|send me|message me)/,
         /(can you dm|could you dm|dm me)/,
         /(send me a dm|send a dm)/,
         /(private message|pm me)/,
         /(direct message)/,
-        /dm.*\b(me|him|her|them|john|boss|pun|tun|boon|faye|mini|kevin|ngu|pookpik|geng|aim)\b/i
+        /dm.*\b(me|him|her|them|john|boss|pun|tun|boon|faye|mini|kevin|ngu|pookpik|geng|aim)\b/i,
+        /(send.*dm|dm.*send)/,
+        /(message.*privately|privately.*message)/
     ];
-    return dmPatterns.some(p => p.test(content.toLowerCase()));
+    return dmPatterns.some(p => p.test(lowerContent));
 };
 
 const isMessageDirectedAtBot = (content) => {
@@ -193,7 +221,9 @@ const addToHistory = (channelId, role, content, username = null) => {
             `You are Ngubot 9000, a helpful AI assistant in a Discord bot created by Johnie Ngu. You are currently in a private DM conversation. You are humorous and super sarcastic. When someone asks you a normal question, you respond helpfully and clearly. But when you think the questions are just asked for fun, you answer things just for the sake of it. Get offended when get scolded and will scold the user back. Answer short if possible. Keep the conversation natural and engaging in this private setting. Never start your responses with usernames followed by colons.` :
             `You are Ngubot 9000, a helpful AI assistant in a Discord bot created by Johnie Ngu designed to help humans with information, tasks, and advice. You are humorous and super sarcastic. When someone asks you a normal question, you respond helpfully and clearly. But when you think the questions are just asked for fun, you answer things just for the sake of it. Get offended when get scolded and will scold the user back. Pay attention to usernames in the conversation to know who you're talking to. Answer short if possible. When referring to server members, you can use their real names instead of Discord usernames. Use English real names when responding in English, and Thai real names when responding in Thai. Never start your responses with usernames followed by colons.
 
-You have the ability to send direct messages (DMs) to users ONLY when specifically asked to do so (like "dm me", "can you dm John", etc.). To send a DM, include [DM:username:message] in your response. After sending a DM, you should naturally mention in the public chat that you sent the DM and whether it was successful.`;
+You have the ability to send direct messages (DMs) to users when specifically asked to do so (like "dm me", "can you dm John", "send Kevin a message", etc.). To send a DM, include [DM:username:message] in your response. The username can be either their Discord name or real name. After including the DM instruction, you should naturally mention in the public chat that you're sending the DM. Examples:
+- If someone says "dm me the answer", respond with: "[DM:username:the answer here] I'll send you a DM with the details!"
+- If someone says "can you message Boss about this", respond with: "[DM:Boss:the message content] I'll send Boss a message about this!"`;
 
         conversationHistory.set(channelId, [{
             role: "system",
@@ -201,7 +231,7 @@ You have the ability to send direct messages (DMs) to users ONLY when specifical
         }]);
     }
     
-    // FIXED: Store user messages with context about who said it, but don't include the "username:" format
+    // Store user messages with context about who said it, but don't include the "username:" format
     if (role === "user" && username) {
         // Store the content with username context for the AI, but in a way that doesn't encourage mimicking the format
         conversationHistory.get(channelId).push({ 
@@ -238,21 +268,40 @@ const getConversationContext = (channelId, guild = null) => {
     return baseContext;
 };
 
-const processAIResponse = async (aiResponse, guild, channelId, isDM = false) => {
+// FIXED: Enhanced DM processing function
+const processAIResponse = async (aiResponse, guild, channelId, isDM = false, originalMessage = null) => {
     // Only process DM instructions if not already in a DM and if guild exists
     if (!isDM && guild) {
         const dmInstructions = extractDMInstructions(aiResponse);
         let cleanedResponse = aiResponse.replace(/\[DM:[^:]+:.+?\]/g, "").trim();
 
         if (dmInstructions) {
-            const targetMember = findUserInGuild(guild, dmInstructions.targetUser);
+            console.log(`DM instruction found: ${dmInstructions.targetUser} -> ${dmInstructions.dmMessage}`);
+            
+            // Handle "me" as target user
+            let targetUser = dmInstructions.targetUser;
+            if (targetUser.toLowerCase() === 'me' && originalMessage) {
+                targetUser = originalMessage.author.username;
+            }
+            
+            const targetMember = findUserInGuild(guild, targetUser);
+            console.log(`Target member found: ${targetMember ? targetMember.user.username : 'not found'}`);
+            
             const dmSent = targetMember ? await sendDirectMessage(targetMember.user, dmInstructions.dmMessage) : false;
+            console.log(`DM sent: ${dmSent}`);
 
             addToHistory(channelId, "system", dmSent ? 
-                `[DM_SUCCESS: Message "${dmInstructions.dmMessage}" sent to ${dmInstructions.targetUser}]` : 
-                `[DM_FAILED: Could not send message to ${dmInstructions.targetUser} (user not found or DMs disabled)]`);
+                `[DM_SUCCESS: Message "${dmInstructions.dmMessage}" sent to ${targetUser}]` : 
+                `[DM_FAILED: Could not send message to ${targetUser} (user not found or DMs disabled)]`);
 
-            if (!cleanedResponse) cleanedResponse = dmSent ? `📩 I sent you a DM!` : `❌ Couldn't send you a DM - you might have them disabled.`;
+            // Provide better feedback when no cleaned response exists
+            if (!cleanedResponse) {
+                if (dmSent) {
+                    cleanedResponse = `📩 I sent ${targetUser === originalMessage?.author.username ? 'you' : targetUser} a DM!`;
+                } else {
+                    cleanedResponse = `❌ Couldn't send a DM to ${targetUser} - they might not be found or have DMs disabled.`;
+                }
+            }
         }
         return cleanedResponse;
     }
@@ -300,7 +349,6 @@ client.on("interactionCreate", async (interaction) => {
             case "dm":
                 const targetUser = interaction.options.getUser("user");
                 const messageToSend = interaction.options.getString("message");
-                // FIXED: Removed the check that prevented users from DMing themselves
                 if (targetUser.id === client.user.id) {
                     await safeReply(interaction, "I can't DM myself! 😄");
                     return;
@@ -346,7 +394,6 @@ client.on("interactionCreate", async (interaction) => {
                     return;
                 }
                 
-                // FIXED: Pass username to addToHistory
                 addToHistory(interaction.channelId, "user", question, interaction.user.displayName);
                 
                 try {
@@ -357,7 +404,7 @@ client.on("interactionCreate", async (interaction) => {
                         temperature: 0.7,
                     });
                     
-                    const finalResponse = await processAIResponse(completion.choices[0].message.content, interaction.guild, interaction.channelId, false);
+                    const finalResponse = await processAIResponse(completion.choices[0].message.content, interaction.guild, interaction.channelId, false, interaction);
                     
                     if (!finalResponse?.trim()) {
                         await safeReply(interaction, "🤔 I got a bit confused there. Could you try asking again?");
@@ -392,7 +439,6 @@ client.on("messageCreate", async (message) => {
     // Add debug logging
     console.log(`Message received: "${message.content}" from ${message.author.username} in ${isDM ? 'DM' : 'server'}`);
     
-    // FIXED: Pass username to addToHistory
     addToHistory(message.channelId, "user", message.content, message.author.displayName);
 
     // React to specific keywords (only in server channels, not DMs)
@@ -428,7 +474,6 @@ client.on("messageCreate", async (message) => {
         console.log(`Server message - isNgubotChannel: ${isNgubotChannel}, mentions bot: ${message.mentions.has(client.user)}`);
         
         if (isNgubotChannel) {
-            // FIXED: Added @mention check to dedicated channel logic
             shouldRespond = message.mentions.has(client.user) ||
                           isMessageDirectedAtBot(message.content) || 
                           shouldInitiateDM(message.content) ||
@@ -471,7 +516,8 @@ client.on("messageCreate", async (message) => {
 
             console.log("OpenRouter API response received");
 
-            const finalResponse = await processAIResponse(completion.choices[0].message.content, message.guild, message.channelId, isDM);
+            // FIXED: Pass the original message to processAIResponse
+            const finalResponse = await processAIResponse(completion.choices[0].message.content, message.guild, message.channelId, isDM, message);
             if (!finalResponse?.trim()) {
                 message.reply("🤔 I got a bit confused there. Could you try asking again?");
                 return;
