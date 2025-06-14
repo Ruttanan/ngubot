@@ -1,6 +1,7 @@
 const { Client, GatewayIntentBits, Collection, REST, Routes, SlashCommandBuilder } = require("discord.js");
 const OpenAI = require("openai");
 const express = require('express');
+const { memberRealNames } = require('./config');
 
 // Express setup
 const app = express();
@@ -34,7 +35,6 @@ function startSelfPing() {
 
 // Configuration
 const openai = new OpenAI({ apiKey: process.env.OPENROUTER_API_KEY, baseURL: "https://openrouter.ai/api/v1" });
-const memberRealNames = { HappyBT: ["Boss", "บอส"], "Dr. Feelgood": ["Pun", "ปั้น"], padkapaow: ["Tun", "ตั้น"], BoonP1: ["Boon", "บุ๋น"], orengipratuu: ["Faye", "ฟาเย่"], imminicosmic: ["Mini", "มินิ"], keffv1: ["Kevin", "เควิน"], keyfungus: ["Ngu", "งู"], soybeant0fu: ["Pookpik", "ปุ๊กปิ๊ก"], ยักcute: ["Geng", "เก่ง"], "ํืUnclejoe": ["Aim", "เอม"], "abobo.gimbo": ["Gimbo", "กิมโบ้"] };
 
 // Global state
 const ngubotChannels = new Map();
