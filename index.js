@@ -10,27 +10,101 @@ app.get('/', (req, res) => res.send('Ngubot is running! 🐍'));
 app.get('/health', (req, res) => res.json({ status: 'online', uptime: process.uptime(), timestamp: new Date().toISOString() }));
 app.listen(PORT, () => { console.log(`Health check server running on port ${PORT}`); startSelfPing(); });
 
-// Self-ping function
+// Improved Self-ping function with better error handling and resource management
 function startSelfPing() {
     const APP_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
-    setInterval(() => {
+    
+    // Validate URL before starting
+    try {
+        new URL('/health', APP_URL);
+    } catch (error) {
+        console.error(`❌ Invalid APP_URL: ${APP_URL}. Self-ping disabled.`);
+        return;
+    }
+    
+    let pingInterval;
+    let consecutiveFailures = 0;
+    const MAX_CONSECUTIVE_FAILURES = 5;
+    const PING_INTERVAL = 10 * 60 * 1000; // 10 minutes
+    
+    const performPing = async () => {
         try {
             const url = new URL('/health', APP_URL);
             const module = url.protocol === 'https:' ? require('https') : require('http');
+            
             console.log(`🔄 Starting self-ping to: ${url.toString()}`);
+            
             const req = module.get(url.toString(), (res) => {
                 let data = '';
                 res.on('data', chunk => data += chunk);
-                res.on('end', () => console.log(`✅ Self-ping successful: ${res.statusCode} at ${new Date().toISOString()}`));
+                res.on('end', () => {
+                    console.log(`✅ Self-ping successful: ${res.statusCode} at ${new Date().toISOString()}`);
+                    consecutiveFailures = 0; // Reset failure counter on success
+                });
             });
-            req.on('error', (error) => console.error(`❌ Self-ping failed: ${error.message} at ${new Date().toISOString()}`));
-            req.setTimeout(15000, () => { console.error(`❌ Self-ping timeout (>15s) at ${new Date().toISOString()}`); req.destroy(); });
+            
+            req.on('error', (error) => {
+                consecutiveFailures++;
+                console.error(`❌ Self-ping failed (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}): ${error.message} at ${new Date().toISOString()}`);
+                
+                // Stop self-ping if too many consecutive failures
+                if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                    console.warn(`⚠️ Stopping self-ping after ${MAX_CONSECUTIVE_FAILURES} consecutive failures`);
+                    if (pingInterval) {
+                        clearInterval(pingInterval);
+                        pingInterval = null;
+                    }
+                }
+            });
+            
+            req.setTimeout(15000, () => {
+                consecutiveFailures++;
+                console.error(`❌ Self-ping timeout (>15s) (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}) at ${new Date().toISOString()}`);
+                req.destroy();
+                
+                // Stop self-ping if too many consecutive failures
+                if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                    console.warn(`⚠️ Stopping self-ping after ${MAX_CONSECUTIVE_FAILURES} consecutive timeouts`);
+                    if (pingInterval) {
+                        clearInterval(pingInterval);
+                        pingInterval = null;
+                    }
+                }
+            });
+            
             req.end();
+            
         } catch (error) {
-            console.error(`❌ Self-ping error: ${error.message} at ${new Date().toISOString()}`);
+            consecutiveFailures++;
+            console.error(`❌ Self-ping error (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}): ${error.message} at ${new Date().toISOString()}`);
+            
+            // Stop self-ping if too many consecutive failures
+            if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                console.warn(`⚠️ Stopping self-ping after ${MAX_CONSECUTIVE_FAILURES} consecutive errors`);
+                if (pingInterval) {
+                    clearInterval(pingInterval);
+                    pingInterval = null;
+                }
+            }
         }
-    }, 10 * 60 * 1000);
+    };
+    
+    // Start the interval
+    pingInterval = setInterval(performPing, PING_INTERVAL);
     console.log('🔄 Self-ping started - will ping every 10 minutes');
+    
+    // Graceful shutdown handling
+    const cleanup = () => {
+        if (pingInterval) {
+            console.log('🛑 Stopping self-ping due to shutdown');
+            clearInterval(pingInterval);
+            pingInterval = null;
+        }
+    };
+    
+    process.on('SIGINT', cleanup);
+    process.on('SIGTERM', cleanup);
+    process.on('exit', cleanup);
 }
 
 // Configuration
